@@ -3,6 +3,8 @@
 #include <stdlib.h>
 
 #define MAXLINELENGTH 1024
+#define MAX_OPEN 15304.0
+#define MIN_OPEN 14332.65
 
 typedef struct Day {
     double open, high, low, close, turnover;
@@ -60,53 +62,53 @@ Day* parseCsv(char* filename, int *n) {
     *n = c;
     return D;
 }
-double normalize_open(double value) { 
-    const double max = 15304.0, min = 14332.65;
+
+// returns normalized value of a field, given max and min
+double normalize(double value, double max, double min) { 
     return (value-min)/(max-min);
 }
-void plot(double *x, double *y, int n, char * legend) {
-    int i;//
-    FILE *gnuplot = popen("gnuplot -p","w");
-    fprintf(gnuplot,"set title \"C does Graphs!\" \nset key left top \n");
-    fprintf(gnuplot,"plot '-'title \"%s\" w linespoints\n",legend);
-    for (i=0; i<n; i++) { 
-        fprintf(gnuplot,"%g %g\n",x[i],y[i]);
-    }
-    fprintf(gnuplot,"e\n");
-    fflush(gnuplot);
+
+// returns inverse of normalization function, given original max and min
+double inv_normalize(double value, double max, double min) { 
+    return value*(max-min)+min;
 }
 
-void plot_multiple_lines(double *x, double *y, int datapoints, int lines, char * legend[]) {
+// plot a graph using gnuplot. can plot multiple lines in same graph 
+void plot(double *x, double *y, int datapoints, int lines, char * legend[], char * title) {
     int i,j;//
     FILE *gnuplot = popen("gnuplot -p","w");
-    fprintf(gnuplot,"set title \"C does Graphs!\" \nset key left top \n plot ");
+    fprintf(gnuplot,"set title \"%s\" \nset key left top \n plot ",title);
     for (i=0;i<lines;i++) { 
-        fprintf(gnuplot," %s using 1:2 title \"%s\"  w linespoints ",(i==0)?"'-'":"''", legend[i]);
+        fprintf(gnuplot,"%s using 1:2 title \"%s\"  w linespoints ",(i==0)?"'-'":", ''", legend[i]);
     }
+    fprintf(gnuplot, "\n");
     for (i=0;i<lines;i++) {         
-        for (j=0; j<datapoints; j++) { 
-            fprintf(gnuplot,"%g %g\n",x[j],y[i*lines + j]);
+        for (j=0; j<datapoints; j++) {
+            fprintf(gnuplot,"%g %g\n",x[j],y[i*datapoints + j]);
         }
         fprintf(gnuplot,"e\n");
     }
     fflush(gnuplot);
 }
-void drawLine(Day *D, int n, int a_0, int a_1) { 
-    int c = n;
+
+// draw the final regression line using the a_0 and a_1 parameters we calculated
+void drawLine(Day *D, int n, double a_0, double a_1) { 
+    int c = n-1;
     double *x = (double*) malloc(sizeof(double)*(n+1)); 
     double *y = (double*) malloc(sizeof(double)*(n+1)*2); 
-    while (c>=-1){ 
+    while (c>=0){ 
         x[c] = c;
-        y[c] = normalize_open(D[c].open);
-        y[n+c] = a_0 + a_1*c;
+        y[c] = D[c].open;
+        y[n+c] = inv_normalize(a_0 + a_1*c,MAX_OPEN,MIN_OPEN);
         c--;
     }
-    printf("drawinf\n");
     char *legend[2];
     legend[0] = "Actual";
     legend[1] = "Predicted";
-    plot_multiple_lines(x,y,n,2,legend);
+    plot(x,y,n,2,legend,"Comparing final prediction for linear regression");
 }
+
+// run the lineear regression algorithm with mean square errors and gradient descent 
 void predictWithRegression(Day* D, int n) { 
     int EPOCHS = 0;
     float ALPHA=0.0002;
@@ -123,7 +125,7 @@ void predictWithRegression(Day* D, int n) {
         for (i=0; i<n; i++) {
             x = i;
             y = a_0 + a_1*i;       
-            error = y- normalize_open(D[i].open);
+            error = y- normalize(D[i].open,MAX_OPEN,MIN_OPEN);
             errorSum += error;
             errorIntoXValSum += error*x;
             meanSquareError += error*error;
@@ -140,11 +142,15 @@ void predictWithRegression(Day* D, int n) {
             epoch_record[EPOCHS/10] = EPOCHS;
         }
     }
-    printf("drawing\n");
-    
+    printf("Constants: %lf %lf,\n",a_0,a_1);
+    printf("Prediction for OPEN on Feb 01 is : %lf\n", inv_normalize(a_0+a_1*23,MAX_OPEN,MIN_OPEN));
+    printf("Prediction for OPEN on Feb 05 is : %lf\n", inv_normalize(a_0+a_1*28,MAX_OPEN,MIN_OPEN));
     drawLine(D,n,a_0,a_1);
-    plot(epoch_record,errors,100,"mean sq error");
+    char * legend = "mean sq error";
+    plot(epoch_record,errors,100,1,&legend,"Gradient descent visualization");
 };
+
+// display the entire dataset 
 void printData(Day* D, int n) {
     int c = n;
     double *x = (double*) malloc(sizeof(double)*(c+1));
@@ -156,8 +162,10 @@ void printData(Day* D, int n) {
         D[c].date,D[c].open,D[c].high,D[c].low,D[c].close,D[c].shares,D[c].turnover);
         c--;
     }
-    plot(x,y,n,"open day");
+    char * legend = "Day Open value";
+    plot(x,y,n,1,&legend,"Visualizing the data");
 }
+
 int main(int argc, char* argv[]) { 
     if(argc != 2) { 
         printf("USAGE ./a.out datafile.csv\n");
